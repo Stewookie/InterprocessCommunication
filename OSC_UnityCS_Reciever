@@ -1,0 +1,176 @@
+using UnityEngine;
+using UnityEditor;
+using System.Collections.Generic;
+using System.Collections;
+
+public class OSCReceiverCS : MonoBehaviour {
+	public string RemoteIP  = "127.0.0.1"; //127.0.0.1 signifies a local host (if testing locally
+	public int SendToPort = 8000; //the port you will be sending from
+	public int ListenerPort  = 9000; //the port you will be listening on
+	private Osc handler;
+	public Texture2D tex;
+	public GameObject recieve;
+	public GameObject send;
+    public bool DebugMode = false;
+
+	//VARIABLES YOU WANT TO BE ANIMATED
+	private int yPos = 0; //the rotation around the y axis
+	private int xPos  = 0; //the rotation around the x axis
+
+    List<Color> c;
+
+	int HexToInt(char hexChar ){
+		string hex  = "" + hexChar;
+
+		switch(hex){
+		case "0": return 0;
+		case "1": return 1;
+		case "2": return 2;
+		case "3": return 3;
+		case "4": return 4;
+		case "5": return 5;
+		case "6": return 6;
+		case "7": return 7;
+		case "8": return 8;
+		case "9": return 9;
+		case "A": return 10;
+		case "B": return 11;
+		case "C": return 12;
+		case "D": return 13;
+		case "E": return 14;
+		case "F": return 15;
+		}
+		return -1;
+	}
+
+
+	Color HexToRGB(string color){
+		float red = (float)(HexToInt(color[1]) + HexToInt(color[0]) *16.000)/255;
+		float green = (float)(HexToInt(color[3]) + HexToInt(color[2]) *16.000)/255;
+		float blue = (float)(HexToInt(color[5]) + HexToInt(color[4]) *16.000)/255;
+	 	Color finalColor = new Color();
+
+		finalColor.r = red;
+		finalColor.g = green;
+		finalColor.b = blue;
+		finalColor.a = 1;
+		return finalColor;
+	}
+
+
+	void Start ()
+	{
+		//Initializes on start up to listen for messages
+		//make sure this game object has both UDPPackIO and OSC script attached
+		UDPPacketIO udp  = (UDPPacketIO)GetComponent("UDPPacketIO");
+		udp.init(RemoteIP, SendToPort, ListenerPort);
+		handler = (Osc)GetComponent("Osc");
+		handler.init(udp);
+		handler.SetAllMessageHandler(AllMessageHandler);
+        c = new List<Color>();
+        Debug.Log("Running");
+	}
+	
+	bool doit = false;
+    OscMessage oscM = null;
+    void FixedUpdate()
+    {
+        oscM = Osc.StringToOscMessage("/1/push1");
+        handler.Send(oscM);
+    }
+	void Update () {
+		recieve.transform.position = new Vector3(xPos/10, yPos/10, 0);
+		
+
+		if (Input.GetKeyUp(KeyCode.W))
+		{
+			oscM = Osc.StringToOscMessage("/1/push1");
+			handler.Send(oscM);
+
+		} else if (Input.GetKeyUp(KeyCode.S)){
+			oscM = Osc.StringToOscMessage("/1/push4");
+			handler.Send(oscM);
+		}
+		if(doit){
+            int w = 8;
+            int h = 8;
+            for (int x = 0; x < w; x++)
+            {
+
+                for (int y = 0; y < h; y++)
+                {
+                    int loc = x + y * w;
+                    try 
+                    { 
+                        tex.SetPixel(x, y, c[loc]); 
+                    }
+                    catch
+                    {
+
+                    }
+                }
+            }
+			tex.Apply();
+			doit = false;
+            c.Clear();
+		}
+
+	}
+
+	void OnDisable()
+	{
+		// close OSC UDP socket
+		Debug.Log("closing OSC UDP socket in OnDisable");
+		handler.Cancel();
+		handler = null;
+	}
+	//These functions are called when messages are received
+	//Access values via: oscMessage.Values[0], oscMessage.Values[1], etc
+
+	public void AllMessageHandler(OscMessage oscMessage){
+
+
+		string msgString = Osc.OscMessageToString(oscMessage); //the message and value combined
+		string msgAddress = oscMessage.Address; //the message parameters
+		object msgValueX;
+		object msgValueY;
+
+        if(DebugMode)Debug.Log(msgString); //log the message and values coming from OSC
+
+		//FUNCTIONS YOU WANT CALLED WHEN A SPECIFIC MESSAGE IS RECEIVED
+        switch (msgAddress)
+        {
+            case "/test":
+                msgValueX = oscMessage.Values[0]; //the X message value
+                msgValueY = oscMessage.Values[1]; //the Y message value
+                Rotate(msgValueX, msgValueY);
+                break;
+            case "/pixel":
+                setPixel(oscMessage);
+                if(DebugMode)Debug.Log(oscMessage.Values[0]);
+                break;
+           
+        }
+
+	}
+    int packageCount = 0;
+	public void setPixel(OscMessage param)
+	{
+        if (DebugMode) Debug.Log("HOI");
+        for (int i = 0; i < param.Values.Count; i++)
+        {
+            c.Add(HexToRGB((string)param.Values[i]));
+        }
+
+        doit = true;
+
+	}
+		
+	//FUNCTIONS CALLED BY MATCHING A SPECIFIC MESSAGE IN THE ALLMESSAGEHANDLER FUNCTION
+	public void Rotate(object msgValueX, object msgValueY) //rotate the cube around its axis
+	{
+		yPos = (int)msgValueY;
+		xPos = (int)msgValueX;
+	}
+
+}
