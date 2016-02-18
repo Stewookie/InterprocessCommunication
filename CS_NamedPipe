@@ -1,0 +1,53 @@
+using UnityEngine;
+using System;
+using System.IO;
+using System.Diagnostics;
+using CSNamedPipe;
+using System.Text;
+using System.IO.Pipes;
+
+public class NamedPipe : MonoBehaviour
+{
+
+	NamedPipeServer PServer1; 
+	NamedPipeServer PServer2;
+	NamedPipeServer PServer3;
+	string Ms="Start";
+
+	public GameObject obj;
+
+	void Start(){
+
+		PServer1 = new NamedPipeServer(@"\\.\pipe\myNamedPipe1",0);
+		PServer2 = new NamedPipeServer(@"\\.\pipe\myNamedPipe2",1);
+		PServer3 = new NamedPipeServer(@"\\.\pipe\myNamedPipe3",0);
+		
+		PServer1.Start();
+		PServer2.Start();
+		PServer3.Start();
+		
+		UnityEngine.Debug.Log ("Enter the message");
+		UnityEngine.Debug.Log (Ms);
+
+	}
+	
+	void Update(){
+	
+		if (Ms != "quit") {
+
+			if (PServer2.clientse != null) {
+//				PServer2.SendMessage (Ms, PServer2.clientse);
+			} else {
+				UnityEngine.Debug.Log ("No client available");
+			}
+		} else {
+			PServer1.StopServer ();
+			PServer2.StopServer ();
+			PServer3.StopServer ();
+		}		
+
+        obj.transform.position = new Vector3(PServer1.NPInputX / 10f, PServer3.NPInputY / 10f, 0);
+
+	}
+	
+}
