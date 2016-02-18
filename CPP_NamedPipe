@@ -1,0 +1,210 @@
+// CannyWebcam.cpp
+#include<opencv2/core/core.hpp>
+#include<opencv2/highgui/highgui.hpp>
+#include<opencv2/imgproc/imgproc.hpp>
+
+#include<iostream>
+
+#include <stdio.h>
+#include <windows.h>
+
+unsigned long __stdcall NET_RvThr(void * pParam);
+DWORD WINAPI ThreadProc();
+HANDLE hPipe1, hPipe2, hPipe3;
+BOOL Finished;
+
+int main(int argc, char** argv)
+{
+
+	cv::VideoCapture capWebcam(0);		// declare a VideoCapture object and associate to webcam, 0 => use 1st webcam
+
+	//Pipe Init Data 
+	char bufX[100];
+	char bufY[100];
+	char bufImg[sizeof(cv::Mat)];
+
+	LPTSTR lpszPipename1 = TEXT("\\\\.\\pipe\\myNamedPipe1");
+	LPTSTR lpszPipename2 = TEXT("\\\\.\\pipe\\myNamedPipe2");
+	LPTSTR lpszPipename3 = TEXT("\\\\.\\pipe\\myNamedPipe3");
+
+	DWORD cbWrittenX;
+	DWORD cbWrittenY;
+	DWORD dwBytesToWriteX = (DWORD)strlen(bufX);
+	DWORD dwBytesToWriteY = (DWORD)strlen(bufY);
+
+	//Thread Init Data
+	DWORD threadId;
+	HANDLE hThread = NULL;
+
+	BOOL Write_St = TRUE;
+
+	Finished = FALSE;
+
+	hPipe1 = CreateFile(lpszPipename1, GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
+	hPipe2 = CreateFile(lpszPipename2, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
+	hPipe3 = CreateFile(lpszPipename3, GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
+
+	//Cam
+	if (capWebcam.isOpened() == false) {			// check if VideoCapture object was associated to webcam successfully
+		std::cout << "error: capWebcam not accessed successfully\n\n";	// if not, print error message to std out
+		return(0);														// and exit program
+	}
+
+	cv::Mat matOriginal;		// input image
+
+	char charCheckForEscKey = 0;
+
+	int iLowH = 67;
+	int iHighH = 179;
+
+	int iLowS = 154;
+	int iHighS = 255;
+
+	int iLowV = 131;
+	int iHighV = 255;
+
+	int iLastX = -1;
+	int iLastY = -1;
+	
+	//Capture a temporary image from the camera
+	cv::Mat imgTmp;
+	capWebcam.read(imgTmp);
+
+	//Create a black image with the size as the camera output
+	cv::Mat imgLines = cv::Mat::zeros(imgTmp.size(), CV_8UC3);
+
+
+	if ((hPipe1 == NULL || hPipe1 == INVALID_HANDLE_VALUE) || (hPipe2 == NULL || hPipe2 == INVALID_HANDLE_VALUE) || (hPipe3 == NULL || hPipe3 == INVALID_HANDLE_VALUE))
+	{
+		printf("Could not open the pipe  - (error %d)\n", GetLastError());
+
+	}
+	else
+	{
+		//hThread = CreateThread(NULL, 0, &NET_RvThr, NULL, 0, NULL);
+
+		while (charCheckForEscKey != 27 && capWebcam.isOpened() && Write_St) {		// until the Esc key is pressed or webcam connection is lost
+			bool blnFrameReadSuccessfully = capWebcam.read(matOriginal);		// get next frame
+
+			if (!blnFrameReadSuccessfully || matOriginal.empty()) {		// if frame not read successfully
+				std::cout << "error: frame not read from webcam\n";		// print error message to std out
+				break;													// and jump out of while loop
+			}
+
+			cv::medianBlur(matOriginal, matOriginal, 3);
+
+			cv::Mat imgHSV;
+
+			cv::cvtColor(matOriginal, imgHSV, cv::COLOR_BGR2HSV); //Convert the captured frame from BGR to HSV
+
+			cv::Mat imgThresholded;
+
+			cv::inRange(imgHSV, cv::Scalar(iLowH, iLowS, iLowV), cv::Scalar(iHighH, iHighS, iHighV), imgThresholded); //Threshold the image
+
+			//morphological opening (remove small objects from the foreground)
+			cv::erode(imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5)));
+			cv::dilate(imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5)));
+
+			//morphological closing (fill small holes in the foreground)
+			cv::dilate(imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5)));
+			cv::erode(imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5)));
+
+			cv::Moments oMoments = cv::moments(imgThresholded);
+
+			double dM01 = oMoments.m01;
+			double dM10 = oMoments.m10;
+			double dArea = oMoments.m00;
+			int posX = 0;
+			int posY = 0;
+			if (dArea > 10000)
+			{
+				//calculate the position of the ball
+				posX = dM10 / dArea;
+				posY = dM01 / dArea;
+
+				if (iLastX >= 0 && iLastY >= 0 && posX >= 0 && posY >= 0)
+				{
+					//Draw a red line from the previous point to the current point
+					cv::line(imgLines, cv::Point(posX, posY), cv::Point(iLastX, iLastY), cv::Scalar(0, 0, 255), 2);
+				}
+
+				iLastX = posX;
+				iLastY = posY;
+
+			}
+			matOriginal = matOriginal + imgLines;
+			// declare windows
+			cv::namedWindow("Original", CV_WINDOW_NORMAL);	// note: you can use CV_WINDOW_NORMAL which allows resizing the window
+			cv::namedWindow("Canny", CV_WINDOW_NORMAL);		// or CV_WINDOW_AUTOSIZE for a fixed size window matching the resolution of the image
+			// CV_WINDOW_AUTOSIZE is the default
+			cv::imshow("Original", matOriginal);		// show windows
+			cv::imshow("Canny", imgThresholded);
+			
+			//convert int to string and then to const * char
+			std::ostringstream ostr;
+			ostr << posX;
+			ostr << ",";
+			ostr << posY;
+
+			std::cout << ostr.str() << '\r' << std::flush;
+
+			std::string sX = std::to_string(posX);
+			char const *pcharX = sX.c_str();  //use char const* as target type
+
+			strcpy(bufX, pcharX);
+
+			//Send to pipe
+			if (strcmp(bufX, "quit") == 0)
+				Write_St = FALSE;
+			else
+			{
+				WriteFile(hPipe1, bufX, dwBytesToWriteX, &cbWrittenX, NULL);
+				memset(bufX, 0xCC, 100);
+			}
+
+
+			std::string sY = std::to_string(posY);
+			char const *pcharY = sY.c_str();  //use char const* as target type
+
+			strcpy(bufY, pcharY);
+
+			//Send to pipe
+			if (strcmp(bufY, "quit") == 0)
+				Write_St = FALSE;
+			else
+			{
+				WriteFile(hPipe3, bufY, dwBytesToWriteY, &cbWrittenY, NULL);
+				memset(bufY, 0xCC, 100);
+			}
+
+			charCheckForEscKey = cv::waitKey(1);		// delay (in ms) and get key press, if any
+		}	// end while
+
+	} return(0);
+}
+
+unsigned long __stdcall NET_RvThr(void * pParam) {
+	BOOL fSuccess;
+	char chBuf[128];
+	DWORD dwBytesToWrite = (DWORD)strlen(chBuf);
+	DWORD cbRead;
+	int i;
+
+	while (1)
+	{
+		fSuccess = ReadFile(hPipe2, chBuf, dwBytesToWrite, &cbRead, NULL);
+		if (fSuccess)
+		{
+			printf("C++ App: Received %d Bytes : ", cbRead);
+			for (i = 0; i<cbRead; i++)
+				printf("%c", chBuf[i]);
+			printf("\n");
+		}
+		if (!fSuccess && GetLastError() != ERROR_MORE_DATA)
+		{
+			printf("Can't Read\n");
+			if (Finished)
+				break;
+		}
+	}return(0);
+}
